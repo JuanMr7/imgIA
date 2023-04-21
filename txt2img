@@ -1,0 +1,364 @@
+#@title Run this
+#@markdown # Instructions:
+#@markdown Select your favorite model (Or all of them)
+#@markdown 1. Run this cell.
+#@markdown 2. Wait
+#@markdown 3. Open gradio link
+
+#@markdown #### The default username is `webui` and password is `diffusion`
+
+#@markdown # Options
+import os
+import time
+from subprocess import getoutput
+import base64
+
+!pip3 install triton
+!pip install pytorch_lightning
+vae_args = ""
+large_models = False
+run_in_gdrive = False #@param {'type':'boolean'}
+optimization = "None" #@param ["--opt-sdp-attention", "--opt-sdp-no-mem-attention", "None"]
+
+#@markdown #### if your webui crashes when loading models, generating images or merging models, consider lowering the vram option
+vram = "--medvram" #@param ["--highvram", "--medvram", "--lowvram", "--lowvram (large models)"]
+if vram == "--highvram":
+  print("--highvram is not a real option. It is just a sentinel value to mimic not using --medvram or --lowvram.")
+  vram = ""
+elif vram == "--lowvram (large models)":
+    vram = "--lowvram"
+    large_models = True
+
+other_args = "--share --gradio-queue" #@param ["--share", ""] {allow-input: true}
+gradio_username = "webui" #@param {'type': 'string'}
+gradio_password = "diffusion" #@param {'type': 'string'}
+#@markdown #### specifying your own Hugging Face user token allows you to download models from your own private repositories
+hf_user_token = "" #@param {'type': 'string'}
+#@markdown Choose the extensions you want
+tag_complete = False #@param {'type': 'boolean'}
+use_lora = False #@param {'type': 'boolean'}
+
+root_dir = "/content"
+
+if run_in_gdrive:
+  from google.colab import drive
+  drive.mount('/content/drive')
+  !mkdir -p {'/content/drive/MyDrive/AI'}
+  root_dir = "/content/drive/MyDrive/AI"
+
+
+blasphemy=base64.b64decode("d2VidWk=").decode('ascii')
+
+%cd {root_dir}
+
+def get_hypernetworks():
+  !mkdir -p {root_dir}/stable-diffusion-$blasphemy/models/hypernetworks
+  hypernetworks = ['anime_2.pt', 'anime.pt', 'anime_3.pt', 'furry_2.pt', 'furry_3.pt', 'furry_protogen.pt', 'furry_transformation.pt', 'furry_scalie.pt', 'pony.pt', 'aini.pt', 'furry.pt', 'furry_kemono.pt']
+  for network in hypernetworks:
+    !wget -c https://huggingface.co/acheong08/secretAI/resolve/main/stableckpt/modules/modules/{network} -O {root_dir}/stable-diffusion-webui/models/hypernetworks/{network}
+
+def custom_model(url, checkpoint_name, format=0):
+  user_token = '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'
+  if hf_user_token != "":
+    user_token = hf_user_token
+  user_header = f"\"Authorization: Bearer {user_token}\""
+  ext = ""
+  if format == 0:
+    ext = "ckpt"
+  elif format == 1:
+    ext = "safetensors"
+
+  !wget -c --header={user_header} {url} -O {root_dir}/stable-diffusion-$blasphemy/models/Stable-diffusion/{checkpoint_name}.{ext}
+
+def custom_lora(url, checkpoint_name, format=0):
+  user_token = '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'
+  if hf_user_token != "":
+    user_token = hf_user_token
+  user_header = f"\"Authorization: Bearer {user_token}\""
+  ext = ""
+  if format == 0:
+    ext = "ckpt"
+  elif format == 1:
+    ext = "safetensors"
+
+  !wget -c --header={user_header} {url} -O {root_dir}/stable-diffusion-$blasphemy/models/Lora/{checkpoint_name}.{ext}
+
+
+def custom_embed(url, embed_name):
+  user_token = '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'
+  if hf_user_token != "":
+    user_token = hf_user_token
+  user_header = f"\"Authorization: Bearer {user_token}\""
+  !wget -c --header={user_header} {url} -O {root_dir}/stable-diffusion-$blasphemy/embeddings/{embed_name}.pt
+
+
+def get_config(url, name):
+  !wget -c {url} -O {root_dir}/stable-diffusion-$blasphemy/models/Stable-diffusion/{name}.yaml
+
+
+def install_deps():
+  !pip install --upgrade fastapi==0.90.1
+
+  %cd {root_dir}
+  !git clone https://github.com/AUTOMATIC1111/stable-diffusion-$blasphemy
+  if tag_complete:
+    !git clone https://github.com/DominikDoom/a1111-sd-webui-tagcomplete /content/stable-diffusion-$blasphemy/extensions/a1111-sd-webui-tagcomplete
+  if use_lora:
+    !git clone https://github.com/kohya-ss/sd-webui-additional-networks.git /content/stable-diffusion-$blasphemy/extensions/sd-webui-additional-networks
+
+  #@markdown Choose the models you want
+  use_hypernetworks = False #@param {'type':'boolean'}
+  Anything_3 = True #@param {'type':'boolean'}
+  #Anything3Berrymix = False #@param {'type':'boolean'}
+  Anything_4_0 = False #@param {'type':'boolean'}
+  Anything_4_5 = False #@param {'type':'boolean'}
+  NovelAI = False #@param {'type':'boolean'}
+  Waifu_Diffusion_1_5_beta1 = False #@param {'type':'boolean'}
+  Waifu_Diffusion = False #@param {'type':'boolean'}
+  Hentai_Diffusion = False #@param {'type':'boolean'}
+  Gyokai = False #@param {'type':'boolean'}
+  Elysium_Anime_v3 = False #@param {'type':'boolean'}
+  Elysium_Anime_v2 = False #@param {'type':'boolean'}
+  Wlopmix = False #@param {'type':'boolean'}
+  Eimis_Anime_Diffusion = False #@param {'type':'boolean'}
+  Eimis_Semi_Realistic = False #@param {'type':'boolean'}
+  AbyssOrangeMix2_hard = False #@param {'type':'boolean'}
+  AbyssOrangeMix2_nsfw = False #@param {'type':'boolean'}
+  AbyssOrangeMix2_sfw = False #@param {'type':'boolean'}
+  AbyssOrangeMix3 = False #@param {'type':'boolean'}
+  #Kenshi = False #@param {'type':'boolean'}
+  PastelMix = False #@param {'type':'boolean'}
+  AnyPastel = False #@param {'type':'boolean'}
+  Counterfeit_2_5 = False #@param {'type': 'boolean'}
+  Rev_Animated = False #@param {'type': 'boolean'}
+  Deliberate_2 = False #@param {'type': 'boolean'}
+  CetusMix = False #@param {'type': 'boolean'}
+  Meina_7 = False #@param {'type': 'boolean'}
+  Meina_8 = False #@param {'type': 'boolean'}
+  Meina_9 = False #@param {'type': 'boolean'}
+  Meina_Hentai = False #@param {'type': 'boolean'}
+  Stable_Diffusion_2_1 = False #@param {'type': 'boolean'}
+  Stable_Diffusion_2_1_base = False #@param {'type': 'boolean'}
+  Stable_Diffusion_2 = False #@param {'type': 'boolean'}
+  Stable_Diffusion_2_base = False #@param {'type': 'boolean'}
+  Stable_Diffusion_2_depth = False #@param {'type': 'boolean'}
+  Stable_Diffusion_2_inpainting = False #@param {'type': 'boolean'}
+  Stable_Diffusion_1_5 = False #@param {'type':'boolean'}
+  Stable_Diffusion_1_5_inpainting = False #@param {'type':'boolean'}
+  Stable_Diffusion = False #@param {'type':'boolean'}
+  Protogen_2_2 = False #@param {'type':'boolean'}
+  Protogen_2_2_pruned = False #@param {'type':'boolean'}
+  Protogen_3_4 = False #@param {'type':'boolean'}
+  Protogen_3_4_pruned = False #@param {'type':'boolean'}
+  Protogen_5_3 = False #@param {'type':'boolean'}
+  Protogen_5_3_pruned = False #@param {'type':'boolean'}
+  Protogen_5_8 = False #@param {'type':'boolean'}
+  Protogen_5_8_pruned = False #@param {'type':'boolean'}
+  Realistic_Vision_1_4 = False #@param {'type':'boolean'}
+  Realistic_Vision_2_0 = False #@param {'type':'boolean'}
+  Dreamshaper_4 = False #@param {'type':'boolean'}
+  Midjourney_v4_Diffusion = False #@param {'type':'boolean'}
+  HassanBlend = False #@param {'type':'boolean'}
+  F222 = False #@param {'type':'boolean'}
+
+  if Anything_3:
+    custom_model("https://huggingface.co/admruul/anything-v3.0/resolve/main/Anything-V3.0-pruned.safetensors", "anything3pruned", 1)
+  #if Anything3Berry:
+  #  custom_model("https://huggingface.co/misobarisic/anything-berrymix/resolve/main/anything70_berry30.ckpt", "anything70_berry30")
+  if Anything_4_0:
+    custom_model("https://huggingface.co/andite/anything-v4.0/resolve/main/anything-v4.0-pruned.safetensors", "anything-v4.0", 1)
+  if Anything_4_5:
+    custom_model("https://huggingface.co/andite/anything-v4.0/resolve/main/anything-v4.5-pruned.safetensors", "anything-v4.5", 1)
+  if NovelAI:
+    custom_model("https://huggingface.co/acheong08/secretAI/resolve/main/stableckpt/animefull-final-pruned/model.ckpt", "novelAI")
+  if Stable_Diffusion:
+    custom_model("https://huggingface.co/CompVis/stable-diffusion-v-1-4-original/resolve/main/sd-v1-4.ckpt", "sd-v1.4")
+  if Waifu_Diffusion_1_5_beta1:
+    custom_model("https://huggingface.co/waifu-diffusion/wd-1-5-beta/resolve/main/checkpoints/wd15-beta1-fp32.safetensors", "wd15-beta-1", 1)
+    get_config("https://huggingface.co/waifu-diffusion/wd-1-5-beta/raw/main/checkpoints/wd15-beta1-fp32.yaml", "wd15-beta-1")
+  if Waifu_Diffusion:
+    custom_model("https://huggingface.co/hakurei/waifu-diffusion-v1-3/resolve/main/wd-v1-3-float32.ckpt", "waifu_diffusion")
+  if Hentai_Diffusion:
+    custom_model("https://huggingface.co/Deltaadams/HentaiDiffusion/resolve/main/HD-17.ckpt", "h_diffusion_17")
+  if Gyokai:
+    custom_model("https://huggingface.co/NoCrypt/gyokai/resolve/main/gyokai.ckpt", "gyokai")
+  if Elysium_Anime_v3:
+    custom_model("https://huggingface.co/hesw23168/SD-Elysium-Model/resolve/main/Elysium_Anime_V3.safetensors", "elysium_anime_v3", 1)
+  if Elysium_Anime_v2:
+    custom_model("https://huggingface.co/hesw23168/SD-Elysium-Model/resolve/main/Elysium_Anime_V2.ckpt", "elysium_anime_v2")
+  if Wlopmix:
+    custom_model("https://huggingface.co/SirVeggie/wlop/resolve/main/wlopmix.ckpt", "wlopmix")
+  if Eimis_Anime_Diffusion:
+    custom_model("https://huggingface.co/eimiss/EimisAnimeDiffusion_1.0v/resolve/main/EimisAnimeDiffusion_1-0v.ckpt", "eimis_anime_diffusion_v1.0")
+  if Eimis_Semi_Realistic:
+    custom_model("https://huggingface.co/eimiss/EimisSemiRealistic/resolve/main/EimisSemiRealistic_1-0v.ckpt", "eimis_semi_realistic_v1.0")
+  if Stable_Diffusion_2_1:
+    custom_model("https://huggingface.co/stabilityai/stable-diffusion-2-1/resolve/main/v2-1_768-nonema-pruned.ckpt", "sd-2-1-768")
+    get_config("https://raw.githubusercontent.com/Stability-AI/stablediffusion/main/configs/stable-diffusion/v2-inference-v.yaml", "sd-2-1-768")
+  if Stable_Diffusion_2_1_base:
+    custom_model("https://huggingface.co/stabilityai/stable-diffusion-2-1-base/resolve/main/v2-1_512-nonema-pruned.ckpt", "sd-2-1-512")
+    get_config("https://raw.githubusercontent.com/Stability-AI/stablediffusion/main/configs/stable-diffusion/v2-inference.yaml", "sd-2-1-512")
+  if Stable_Diffusion_2:
+    custom_model("https://huggingface.co/stabilityai/stable-diffusion-2/resolve/main/768-v-ema.ckpt", "sd-2-768")
+    get_config("https://raw.githubusercontent.com/Stability-AI/stablediffusion/main/configs/stable-diffusion/v2-inference-v.yaml", "sd-2-768")
+  if Stable_Diffusion_2_base:
+    custom_model("https://huggingface.co/stabilityai/stable-diffusion-2-base/resolve/main/512-base-ema.ckpt", "sd-2-512")
+    get_config("https://raw.githubusercontent.com/Stability-AI/stablediffusion/main/configs/stable-diffusion/v2-inference.yaml", "sd-2-512")
+  if Stable_Diffusion_2_depth:
+    custom_model("https://huggingface.co/stabilityai/stable-diffusion-2-depth/resolve/main/512-depth-ema.ckpt", "sd-2-depth")
+    get_config("https://raw.githubusercontent.com/Stability-AI/stablediffusion/main/configs/stable-diffusion/v2-inference.yaml", "sd-2-depth")
+  if Stable_Diffusion_2_inpainting:
+    custom_model("https://huggingface.co/stabilityai/stable-diffusion-2-inpainting/resolve/main/512-inpainting-ema.ckpt", "sd-2-inpainting")
+    get_config("https://raw.githubusercontent.com/Stability-AI/stablediffusion/main/configs/stable-diffusion/v2-inpainting-inference-v.yaml", "sd-2-inpainting")
+  if Stable_Diffusion_1_5:
+    custom_model("https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.ckpt", "sd-v1-5")
+  if Stable_Diffusion_1_5_inpainting:
+    custom_model("https://huggingface.co/runwayml/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt", "sd-v1-5-inpainting")
+  if HassanBlend:
+    custom_model("https://huggingface.co/hassanblend/hassanblend1.4/resolve/main/HassanBlend1.4_Safe.safetensors", "hassanblend1.4", 1)
+  if F222:
+    custom_model("https://huggingface.co/acheong08/f222/resolve/main/f222.ckpt", "f222")
+  if Midjourney_v4_Diffusion:
+    custom_model("https://huggingface.co/prompthero/openjourney/resolve/main/mdjrny-v4.safetensors", "midjourney-v4-diffusion", 1)
+  if AbyssOrangeMix2_hard:
+    custom_model("https://huggingface.co/WarriorMama777/OrangeMixs/resolve/main/Models/AbyssOrangeMix2/AbyssOrangeMix2_hard.safetensors", "AbyssOrangeMix2_hard", 1)
+  if AbyssOrangeMix2_nsfw:
+    custom_model("https://huggingface.co/WarriorMama777/OrangeMixs/resolve/main/Models/AbyssOrangeMix2/AbyssOrangeMix2_nsfw.safetensors", "AbbysOrangeMix2_nsfw", 1)
+  if AbyssOrangeMix2_sfw:
+    custom_model("https://huggingface.co/WarriorMama777/OrangeMixs/resolve/main/Models/AbyssOrangeMix2/AbyssOrangeMix2_sfw.safetensors", "AbyssOrangeMix2_sfw", 1)
+  if AbyssOrangeMix3:
+    custom_model("https://huggingface.co/WarriorMama777/OrangeMixs/resolve/main/Models/AbyssOrangeMix3/AOM3_orangemixs.safetensors", "AOM3", 1)
+  #if Kenshi:
+  #  custom_model("https://huggingface.co/SweetLuna/Kenshi/blob/main/KENSHI%2001/KENSHI01_Pruned.safetensors", "Kenshi01", 1)
+  if PastelMix:
+    custom_model("https://huggingface.co/andite/pastel-mix/resolve/main/pastelmix-better-vae-fp32.safetensors", "pastelmix", 1)
+  if AnyPastel:
+    custom_model("https://huggingface.co/m4gnett/any-pastel/resolve/main/AnyPastel-fp16.safetensors", "anypastel", 1)
+  if Counterfeit_2_5:
+    custom_model("https://huggingface.co/gsdf/Counterfeit-V2.5/resolve/main/Counterfeit-V2.5_pruned.safetensors","Counterfeit-V2.5" , 1)
+  if Protogen_5_3:
+    custom_model("https://huggingface.co/darkstorm2150/Protogen_x5.3_Official_Release/resolve/main/ProtoGen_X5.3.safetensors", "Protogen_X5.3", 1)
+  if Protogen_5_3_pruned:
+    custom_model("https://huggingface.co/darkstorm2150/Protogen_x5.3_Official_Release/resolve/main/ProtoGen_X5.3-pruned-fp16.safetensors", "Protogen_X5.3_pruned", 1)
+  if Protogen_5_8:
+    custom_model("https://huggingface.co/darkstorm2150/Protogen_x5.8_Official_Release/resolve/main/ProtoGen_X5.8.safetensors", "Protogen_X5.8", 1)
+  if Protogen_5_8_pruned:
+    custom_model("https://huggingface.co/darkstorm2150/Protogen_x5.8_Official_Release/resolve/main/ProtoGen_X5.8-pruned-fp16.safetensors", "Protogen_X5.8_pruned", 1)
+  if Protogen_2_2:
+    custom_model("https://huggingface.co/darkstorm2150/Protogen_v2.2_Official_Release/resolve/main/Protogen_V2.2.safetensors", "Protogen_V2.2", 1)
+  if Protogen_2_2_pruned:
+    custom_model("https://huggingface.co/darkstorm2150/Protogen_v2.2_Official_Release/resolve/main/Protogen_V2.2-pruned-fp16.safetensors", "Protogen_V2.2_pruned", 1)
+  if Protogen_3_4:
+    custom_model("https://huggingface.co/darkstorm2150/Protogen_x3.4_Official_Release/resolve/main/ProtoGen_X3.4.safetensors", "Protogen_X3.4", 1)
+  if Protogen_3_4_pruned:
+    custom_model("https://huggingface.co/darkstorm2150/Protogen_x3.4_Official_Release/resolve/main/Protogen_X3.4-pruned-fp16.safetensors", "Protogen_X3.4_pruned", 1)
+  if Meina_7:
+    custom_model("https://huggingface.co/Meina/MeinaMix/resolve/main/Meina%20V7%20-%20pruned.safetensors", "Meina_v7", 1)
+  if Meina_8:
+    custom_model("https://huggingface.co/Meina/MeinaMix/resolve/main/Meina%20V8%20pruned.safetensors", "Meina_v8", 1)
+  if Meina_9:
+    custom_model("https://huggingface.co/Meina/MeinaMix/resolve/main/Meina%20V9%20-%20baked%20VAE.safetensors", "Meina_v9", 1)
+  if Meina_Hentai:
+    custom_model("https://huggingface.co/Meina/MeinaMix/resolve/main/MeinaHentai%20-%20baked%20VAE.safetensors", "Meina_Hentai", 1)
+  if Realistic_Vision_1_4:
+    custom_model("https://huggingface.co/SG161222/Realistic_Vision_V1.4/resolve/main/Realistic_Vision_V1.4.safetensors","Realistic_Vision_V1.4", 1)
+  if Realistic_Vision_2_0:
+    custom_model("https://huggingface.co/SG161222/Realistic_Vision_V2.0/resolve/main/Realistic_Vision_V2.0.safetensors","Realistic_Vision_V2.0", 1)
+  if Dreamshaper_4:
+    custom_model("https://huggingface.co/Lykon/DreamShaper/resolve/main/DreamShaper_4BakedVae_fp16.safetensors", "DreamSHaper_4BakedVae", 1)
+  if Rev_Animated:
+    custom_model("https://huggingface.co/ahmmu20/rev_animated/resolve/main/revAnimated_v11.safetensors", "revAnimated_v11", 1)
+  if Deliberate_2:
+    custom_model("https://huggingface.co/XpucT/Deliberate/resolve/main/Deliberate_v2.safetensors", "Deliberate_v2", 1)
+  if CetusMix:
+    custom_model("https://huggingface.co/ckpt/cetus-mix/resolve/main/cetusMix_Version35.safetensors", "cetusMis_Version35", 1)
+
+  try:
+    for (name, url, config_url, format_type) in models:
+      custom_model(url, name, format_type)
+      if config_url != None:
+        get_config(config_url, name)
+  except:
+    pass
+
+  if use_hypernetworks:
+    get_hypernetworks()
+    
+  %cd {root_dir}/stable-diffusion-$blasphemy/extensions
+  !git clone https://github.com/yfszzx/stable-diffusion-webui-images-browser
+  %cd {root_dir}
+
+
+def install_embeds():
+  try:
+    for (name, url) in embeds:
+      custom_embed(url, name)
+  except:
+    pass
+    
+def install_lora():
+  user_token = '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'
+  if hf_user_token != "":
+    user_token = hf_user_token
+  user_header = f"\"Authorization: Bearer {user_token}\""
+  
+  #@markdown Choose the LoRA to include
+  raiden_shogun_LoRA = False #@param {'type':'boolean'}
+  yae_miko_Mediumpruned = False #@param {'type':'boolean'}
+  Shenhe_Medium = False #@param {'type':'boolean'}
+  eulaMedium = False #@param {'type':'boolean'}
+  Ganyu_Medium = False #@param {'type':'boolean'}
+  #@markdown Additional LORAs can be added by running the appropriate cell down below
+  
+  if raiden_shogun_LoRA:
+    !wget -P {root_dir}/stable-diffusion-$blasphemy/models/Lora https://huggingface.co/YoungMasterFromSect/Trauter_LoRAs/resolve/main/LoRA/Genshin-Impact/Raiden%20Shogun/raiden%20shogun_LoRA.safetensors
+  if yae_miko_Mediumpruned:
+    !wget -P {root_dir}/stable-diffusion-$blasphemy/models/Lora https://huggingface.co/YoungMasterFromSect/Trauter_LoRAs/resolve/main/LoRA/Genshin-Impact/yae%20miko/yae%20miko_Mediumpruned.safetensors
+  if Shenhe_Medium:
+    !wget -P {root_dir}/stable-diffusion-$blasphemy/models/Lora https://huggingface.co/YoungMasterFromSect/Trauter_LoRAs/resolve/main/LoRA/Genshin-Impact/Shenhe/Shenhe_Medium.safetensors
+  if eulaMedium:
+    !wget -P {root_dir}/stable-diffusion-$blasphemy/models/Lora https://huggingface.co/YoungMasterFromSect/Trauter_LoRAs/resolve/main/LoRA/Genshin-Impact/Eula/eulaMedium.safetensors
+  if Ganyu_Medium:
+    !wget -P {root_dir}/stable-diffusion-$blasphemy/models/Lora https://huggingface.co/YoungMasterFromSect/Trauter_LoRAs/resolve/main/LoRA/Genshin-Impact/Ganyu/Ganyu_Medium.safetensors
+
+  try:
+    for (name, url, num) in lora:
+      custom_lora(url, name, num)
+  except:
+    pass
+
+
+def run_webui():
+  #@markdown Choose the vae you want
+  vae = "Anime (Anything 4)" #@param ["Anime (Anything 3)", "Anime (Anything 4)", "Anime (Orangemix)","Anime (Waifu Diffusion 1.4)", "Stable Diffusion", "None"]
+  
+  if vae == "Anime (Anything 3)":
+    !wget -c https://huggingface.co/admruul/anything-v3.0/resolve/main/Anything-V3.0.vae.pt -O {root_dir}/stable-diffusion-$blasphemy/models/Stable-diffusion/Anything-V3.0.vae.pt
+    vae_args = "--vae-path " + root_dir + "/stable-diffusion-" + blasphemy + "/models/Stable-diffusion/Anything-V3.0.vae.pt"
+  if vae == "Anime (Anything 4)":
+    !wget -c https://huggingface.co/andite/anything-v4.0/resolve/main/anything-v4.0.vae.pt -O {root_dir}/stable-diffusion-$blasphemy/models/Stable-diffusion/anything-v4.0.vae.pt
+    vae_args = "--vae-path " + root_dir + "/stable-diffusion-" + blasphemy + "/models/Stable-diffusion/anything-v4.0.vae.pt"
+  if vae == "Anime (Orangemix)":
+    !wget -c https://huggingface.co/WarriorMama777/OrangeMixs/resolve/main/VAEs/orangemix.vae.pt -O {root_dir}/stable-diffusion-$blasphemy/models/Stable-diffusion/orangemix.vae.pt
+    vae_args = "--vae-path " + root_dir + "/stable-diffusion-" + blasphemy + "/models/Stable-diffusion/orangemix.vae.pt"
+  if vae == "Anime (Waifu Diffusion 1.4)":
+    !wget -c https://huggingface.co/hakurei/waifu-diffusion-v1-4/resolve/main/vae/kl-f8-anime.ckpt -O {root_dir}/stable-diffusion-$blasphemy/models/Stable-diffusion/kl-f8-anime.vae.pt
+    vae_args = "--vae-path " + root_dir + "/stable-diffusion-" + blasphemy + "/models/Stable-diffusion/kl-f8-anime.vae.pt"
+  if vae == "Stable Diffusion":
+    !wget https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.ckpt -O {root_dir}/stable-diffusion-$blasphemy/models/Stable-diffusion/sd-v1-5.vae.pt
+    vae_args = "--vae-path " + root_dir + "/stable-diffusion-" + blasphemy + "/models/Stable-diffusion/sd-v1-5.vae.pt"
+
+  %cd {root_dir}/stable-diffusion-$blasphemy/
+  !COMMANDLINE_ARGS="{other_args} {vae_args} {vram} --gradio-auth {gradio_username}:{gradio_password}" REQS_FILE="requirements.txt" python launch.py
+
+install_deps()
+install_embeds()
+install_lora()
+if optimization != "None":
+  other_args = f"{optimization} {other_args}"
+
+if large_models:
+  %cd /content/stable-diffusion-$blasphemy
+  !sed -i "s/'cpu'/devices.get_optimal_device()/g" modules/extras.py
+
+run_webui()
